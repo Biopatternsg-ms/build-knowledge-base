@@ -1,0 +1,52 @@
+pipeline {
+    agent any
+
+    environment {
+        CONTAINER_NAME = "${env.JOB_NAME.toLowerCase().replaceAll('[^a-z0-9-]', '-')}"
+        PORT = '8007'
+        NETWORK = 'general-network'
+    }
+
+    stages {
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    def localImageName = "${CONTAINER_NAME}:latest"
+                    echo "--- Building Local Docker Image: ${localImageName} ---"
+                    sh "docker build -t ${localImageName} ."
+                    echo "--- Docker image built successfully! ---"
+                }
+            }
+        }
+
+        stage('Deploy Application') {
+            steps {
+                script {
+                    def imageName = "${CONTAINER_NAME}:latest"
+                    echo "--- Deploying container: ${CONTAINER_NAME} ---"
+                    
+                    sh "docker network create ${NETWORK} || true"
+                    sh "docker stop ${CONTAINER_NAME} || true"
+                    sh "docker rm ${CONTAINER_NAME} || true"
+
+                    sh """
+                    docker run -d \\
+                        --name ${CONTAINER_NAME} \\
+                        -p ${PORT}:8000 \\
+                        --network ${NETWORK} \\
+                        --restart always \\
+                        ${imageName}
+                    """
+                    echo "--- Deployment completed! ---"
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "--- Cleaning up the workspace ---"
+            deleteDir()
+        }
+    }
+}
