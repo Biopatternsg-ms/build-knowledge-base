@@ -13,16 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-from fastapi.testclient import TestClient
-from main import app
+from src.model.hello import HelloMessage
+from src.model.hello_repository import HelloRepositoryInterface
 
-client = TestClient(app)
+class GetHelloMessageUseCase:
+    def __init__(self, hello_repository: HelloRepositoryInterface):
+        self.hello_repository = hello_repository
 
-def test_read_hello():
-    response = client.get("/hello")
-    assert response.status_code == 200
-    json_data = response.json()
-    assert json_data["message"] == "hello"
-    assert json_data["version"] == "1.0.0"
-    assert json_data["status"] == "active"
-
+    def execute(self) -> HelloMessage:
+        return self.hello_repository.get_hello_message()

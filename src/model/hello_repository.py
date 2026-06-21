@@ -13,16 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-from fastapi.testclient import TestClient
-from main import app
+from abc import ABC, abstractmethod
+from src.model.hello import HelloMessage
 
-client = TestClient(app)
-
-def test_read_hello():
-    response = client.get("/hello")
-    assert response.status_code == 200
-    json_data = response.json()
-    assert json_data["message"] == "hello"
-    assert json_data["version"] == "1.0.0"
-    assert json_data["status"] == "active"
-
+class HelloRepositoryInterface(ABC):
+    @abstractmethod
+    def get_hello_message(self) -> HelloMessage:
+        """Obtiene el objeto HelloMessage de prueba."""
+        pass

@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from src.infrastructure.api.routes import router as api_router
 
 # Configuración básica del sistema de logs de Python
 logging.basicConfig(
@@ -34,11 +35,8 @@ app = FastAPI(
     version="1.0.0"
 )
 
+app.include_router(api_router)
+
 class PathwaysRequest(BaseModel):
     root_path: Optional[str] = None
     pathways: Optional[List[str]] = None
-
-@app.get("/hello")
-def read_hello():
-    logger.info("Endpoint /hello fue consultado exitosamente")
-    return {"message": "hello"}
