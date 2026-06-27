@@ -14,7 +14,7 @@
 # limitations under the License.
 #
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List
 
 class Location(BaseModel):
     length: int
@@ -23,10 +23,10 @@ class Location(BaseModel):
 class PubTatorObject(BaseModel):
     accession: str
     biotype: str
-    identifier: Optional[str] = None
+    identifier: str
     locations: List[Location]
     name: str
-    normalizedId: Optional[str] = None
+    normalizedId: str
     text: str
     type: str
 
@@ -36,6 +36,7 @@ class PubTatorEvent(BaseModel):
     role2: str
 
 class PubTatorDocument(BaseModel):
+    pipelineId: str  # Identificador del pipeline al que pertenece el documento (obligatorio)
     pmid: str
     title: str
     text: str

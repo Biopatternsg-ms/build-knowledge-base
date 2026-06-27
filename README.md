@@ -63,6 +63,9 @@ Inicia el servidor local con `uvicorn`. Se configura para escuchar en la interfa
 uvicorn main:app --host 0.0.0.0 --port 8007 --reload
 ```
 
+```bach
+PYTHONPATH=. .venv/bin/uvicorn main:app --host 0.0.0.0 --port 8007 --reload
+```
 ---
 
 ## Paso 4: Pruebas con Postman (desde Windows)

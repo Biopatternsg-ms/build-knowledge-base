@@ -311,3 +311,190 @@ class PubTatorKbAdapter:
             errors.close()
 
         return self.output_dir
+
+    def _process_document_to_structures(self, document: PubTatorDocument) -> tuple:
+        """
+        Procesa un documento PubTator y retorna las estructuras internas
+        (entities, events, objects_identities) sin escribir nada al disco.
+        Reutilizado por generate_kb_to_bytes y merge_kb_bytes.
+        """
+        abstract = document.title + "\n" + document.text
+        sentences = nltk.sent_tokenize(abstract)
+        pubmed_id = document.pmid
+
+        entities: Dict[str, List[Dict[str, Any]]] = {}
+        objects_identities: List[Tuple[str, str]] = []
+        accession_to_name: Dict[str, str] = {}
+
+        for obj in document.objects:
+            std_name = obj.name.replace("'", "\\'").upper()
+            accession_to_name[obj.accession] = std_name
+            accession_to_name[obj.accession.upper()] = std_name
+
+            for loc in obj.locations:
+                entity = {
+                    'ID': std_name,
+                    'start': loc.offset,
+                    'end': loc.offset + loc.length,
+                    'text': abstract[loc.offset:loc.offset + loc.length].replace("'", "\\'").upper(),
+                    'name': std_name,
+                    'type': obj.type,
+                    'biotype': obj.biotype,
+                    'pubmed_id': pubmed_id
+                }
+                if std_name not in entities:
+                    entities[std_name] = [entity]
+                    biotype_lower = obj.biotype.lower()
+                    type_map = {
+                        'gene': f"protein('{std_name}').",
+                        'chemical': f"ligand('{std_name}').",
+                        'disease': f"disease('{std_name}').",
+                        'variant': f"variant('{std_name}').",
+                        'species': f"species('{std_name}').",
+                        'cellline': f"cellline('{std_name}').",
+                    }
+                    if biotype_lower in type_map:
+                        objects_identities.append((std_name, type_map[biotype_lower]))
+                else:
+                    entities[std_name].append(entity)
+
+        events: Dict[str, Any] = {}
+        for ev in document.events:
+            subj_name = accession_to_name.get(ev.role1, ev.role1.replace("'", "\\'").upper())
+            obj_name  = accession_to_name.get(ev.role2, ev.role2.replace("'", "\\'").upper())
+            relation  = ev.relationType.lower()
+
+            event_data = {'subject': subj_name, 'relation': relation, 'object': obj_name}
+            event_tag  = f"{subj_name},{relation},{obj_name}"
+            event_sents = get_event_sents(sentences, event_data, entities, pubmed_id, abstract)
+
+            if event_tag not in events:
+                opposite = f"event('{obj_name}',{relation},'{subj_name}')" if relation in SPECIAL_RELATIONS else None
+                event_data['pubmed_ids'] = [pubmed_id]
+                event_data['sentences']  = event_sents
+                event_data['opposite']   = opposite
+                events[event_tag] = event_data
+            else:
+                prev_sents = [s for s, _ in events[event_tag]['sentences']]
+                for s, pm in event_sents:
+                    if s not in prev_sents:
+                        events[event_tag]['sentences'].append((s, pm))
+                events[event_tag]['pubmed_ids'].append(pubmed_id)
+
+        return entities, events, objects_identities
+
+    def _structures_to_bytes(self, entities, events, objects_identities) -> Dict[str, bytes]:
+        """
+        Convierte las estructuras internas a un diccionario {filename: bytes}.
+        No escribe nada al disco.
+        """
+        import tempfile, shutil as _shutil
+
+        tmp_dir = tempfile.mkdtemp()
+        try:
+            kb, synonyms = get_normalized_kb(events, entities, objects_identities, tmp_dir)
+            print_kb(kb, tmp_dir)
+            print_synonyms(synonyms, tmp_dir)
+            print_aligned_objs(tmp_dir, synonyms, self.working_dir)
+
+            result: Dict[str, bytes] = {}
+            for fname in ["kBase.pl", "kBaseDoc.txt", "synonyms.pl", "aligned.pl"]:
+                fpath = os.path.join(tmp_dir, fname)
+                if os.path.exists(fpath):
+                    with open(fpath, 'rb') as f:
+                        result[fname] = f.read()
+
+            biotypes_path = os.path.join(tmp_dir, "biotypes-kbs", "biotypes.pl")
+            if os.path.exists(biotypes_path):
+                with open(biotypes_path, 'rb') as f:
+                    result["biotypes/biotypes.pl"] = f.read()
+
+            return result
+        finally:
+            _shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def generate_kb_to_bytes(self, document: PubTatorDocument) -> Dict[str, bytes]:
+        """
+        Genera los archivos KB para un único documento y los retorna en memoria.
+        No escribe al disco. Usado para la acumulación en MinIO.
+
+        Returns:
+            Diccionario {filename: bytes} con los archivos generados.
+        """
+        entities, events, objects_identities = self._process_document_to_structures(document)
+        return self._structures_to_bytes(entities, events, objects_identities)
+
+    def merge_kb_bytes(
+        self,
+        existing_bytes: Dict[str, bytes],
+        document: PubTatorDocument
+    ) -> Dict[str, bytes]:
+        """
+        Mergea el KB acumulado existente con un nuevo documento PubTator.
+        Los eventos duplicados se deduplicam; las oraciones se acumulan.
+
+        Args:
+            existing_bytes: Archivos KB actuales en MinIO (pueden estar vacíos).
+            document: Nuevo documento PubTator a agregar.
+
+        Returns:
+            Diccionario {filename: bytes} con el KB mergeado.
+        """
+        # Procesar el nuevo documento
+        new_entities, new_events, new_objects_identities = self._process_document_to_structures(document)
+
+        # Parsear el kBase.pl existente para recuperar los eventos acumulados
+        # Estrategia: re-procesar a nivel de estructuras mergeando en memoria
+        # Los eventos del nuevo documento se fusionan con los ya existentes
+
+        # Recuperar entidades y eventos del acumulado parseando el kBase.pl existente
+        existing_events: Dict[str, Any] = {}
+        existing_entities: Dict[str, List[Dict[str, Any]]] = {}
+        existing_identities: List[Tuple[str, str]] = []
+
+        if "kBase.pl" in existing_bytes:
+            # Parsear eventos del kBase.pl acumulado (formato: event('S',rel,'O'))
+            import re
+            kbase_text = existing_bytes["kBase.pl"].decode("utf-8", errors="replace")
+            event_pattern = re.compile(r"event\('([^']+)',([^,]+),'([^']+)'\)")
+            for match in event_pattern.finditer(kbase_text):
+                subj, rel, obj = match.group(1), match.group(2), match.group(3)
+                tag = f"{subj},{rel},{obj}"
+                if tag not in existing_events:
+                    opposite = f"event('{obj}',{rel},'{subj}')" if rel in SPECIAL_RELATIONS else None
+                    existing_events[tag] = {
+                        'subject': subj, 'relation': rel, 'object': obj,
+                        'pubmed_ids': [], 'sentences': [], 'opposite': opposite,
+                        'names': ([subj], [obj])
+                    }
+
+        if "biotypes/biotypes.pl" in existing_bytes:
+            biotypes_text = existing_bytes["biotypes/biotypes.pl"].decode("utf-8", errors="replace")
+            import re
+            biotype_pattern = re.compile(r"(\w+)\('([^']+)'\)\.")
+            for match in biotype_pattern.finditer(biotypes_text):
+                btype, name = match.group(1), match.group(2)
+                existing_identities.append((name, f"{btype}('{name}')."))
+
+        # Mergear eventos nuevos sobre los existentes
+        merged_events = {**existing_events}
+        for tag, ev_data in new_events.items():
+            if tag not in merged_events:
+                merged_events[tag] = ev_data
+            else:
+                prev_sents = [s for s, _ in merged_events[tag]['sentences']]
+                for s, pm in ev_data['sentences']:
+                    if s not in prev_sents:
+                        merged_events[tag]['sentences'].append((s, pm))
+                merged_events[tag]['pubmed_ids'].extend(ev_data['pubmed_ids'])
+
+        # Mergear entidades e identidades
+        merged_entities = {**existing_entities, **new_entities}
+        seen_names = {name for name, _ in existing_identities}
+        merged_identities = list(existing_identities)
+        for name, identity in new_objects_identities:
+            if name not in seen_names:
+                merged_identities.append((name, identity))
+                seen_names.add(name)
+
+        return self._structures_to_bytes(merged_entities, merged_events, merged_identities)
