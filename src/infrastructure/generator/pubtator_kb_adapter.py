@@ -413,6 +413,107 @@ class PubTatorKbAdapter:
         finally:
             _shutil.rmtree(tmp_dir, ignore_errors=True)
 
+    def generate_kb_as_json(self, document: PubTatorDocument) -> Dict[str, Any]:
+        """
+        Genera la base de conocimiento a partir de un documento PubTator y retorna
+        toda la información como un diccionario Python estructurado (sin escribir
+        al disco ni a MinIO).
+
+        Returns:
+            Diccionario con las claves:
+              - events:   list[{event: str, pubmedIds: list[str]}]
+              - synonyms: dict[str, list[str]]
+              - aligned:  dict con la estructura de aligned.pl
+              - biotypes: dict[str, str]  (nombre → tipo: protein, ligand, ...)
+        """
+        import re
+
+        entities, events, objects_identities = self._process_document_to_structures(document)
+
+        # ── Construir knowledge_base y synonyms en memoria ───────────────────
+        knowledge_base: Dict[str, Any] = {}
+        object_synonyms: Dict[str, List[str]] = {}
+
+        for key, values in events.items():
+            subject  = values['subject']
+            object_  = values['object']
+            relation = values['relation']
+
+            subject_entities = entities.get(subject, [])
+            object_entities  = entities.get(object_, [])
+
+            subject_names = [subject]
+            object_names  = [object_]
+
+            for sub_ent in subject_entities:
+                for field in ('name', 'ID', 'text'):
+                    if sub_ent[field] not in subject_names:
+                        subject_names.append(sub_ent[field])
+
+            if subject not in object_synonyms:
+                object_synonyms[subject] = subject_names
+
+            for obj_ent in object_entities:
+                for field in ('name', 'ID', 'text'):
+                    if obj_ent[field] not in object_names:
+                        object_names.append(obj_ent[field])
+
+            if object_ not in object_synonyms:
+                object_synonyms[object_] = object_names
+
+            event_str = f"event('{subject}',{relation},'{object_}')"
+            knowledge_base[event_str] = {**values, 'names': (subject_names, object_names)}
+
+        # ── events: extraer first/relation/second y pubmedIds (lógica de kBaseDoc) ─
+        events_json: List[Dict[str, Any]] = []
+        for event_str, values in knowledge_base.items():
+            subject  = values['subject']
+            relation = values['relation']
+            object_  = values['object']
+
+            events_json.append({
+                "event": {
+                    "first":    subject,
+                    "relation": relation,
+                    "second":   object_,
+                },
+                "pubmedIds": values['pubmed_ids'],
+            })
+            if values.get('opposite'):
+                # Relación simétrica: el evento inverso intercambia first y second
+                events_json.append({
+                    "event": {
+                        "first":    object_,
+                        "relation": relation,
+                        "second":   subject,
+                    },
+                    "pubmedIds": values['pubmed_ids'],
+                })
+
+        # ── biotypes: extraer tipo desde la cadena "protein('NAME')." ──────────
+        biotypes_json: Dict[str, str] = {}
+        biotype_re = re.compile(r"^(\w+)\('")
+        for name, identity_str in objects_identities:
+            m = biotype_re.match(identity_str)
+            if m:
+                biotypes_json[name] = m.group(1)
+
+        # ── aligned: estructura estática (equivale al contenido de aligned.pl) ─
+        aligned_json: Dict[str, Any] = {
+            "aligned":         ["none"],
+            "no_aligned":      ["none"],
+            "aligned_as":      [["none", "none"]],
+            "aligned_objs":    {"items": [], "count": 0},
+            "no_aligned_objs": {"items": [], "count": 0},
+        }
+
+        return {
+            "events":   events_json,
+            "synonyms": object_synonyms,
+            "aligned":  aligned_json,
+            "biotypes": biotypes_json,
+        }
+
     def generate_kb_to_bytes(self, document: PubTatorDocument) -> Dict[str, bytes]:
         """
         Genera los archivos KB para un único documento y los retorna en memoria.
