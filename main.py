@@ -20,6 +20,15 @@ from pathlib import Path
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+import nltk
+
+# Asegurar que el tokenizador punkt y punkt_tab estén descargados en el entorno (Docker/Server)
+try:
+    nltk.download('punkt', quiet=True)
+    nltk.download('punkt_tab', quiet=True)
+except Exception as e:
+    print(f"Advertencia al descargar recursos de NLTK: {e}")
+
 from src.infrastructure.api.routes import router as api_router
 
 # Configuración básica del sistema de logs de Python
