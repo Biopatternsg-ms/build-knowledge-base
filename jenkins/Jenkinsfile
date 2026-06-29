@@ -29,23 +29,16 @@ pipeline {
                     sh "docker stop ${CONTAINER_NAME} || true"
                     sh "docker rm ${CONTAINER_NAME} || true"
 
-                    withCredentials([
-                        string(credentialsId: 'MINIO_ACCESS_KEY', variable: 'MINIO_ACCESS_KEY'),
-                        string(credentialsId: 'MINIO_SECRET_KEY', variable: 'MINIO_SECRET_KEY')
-                    ]) {
-                        sh """
-                        docker run -d \\
-                            --name ${CONTAINER_NAME} \\
-                            -p ${PORT}:8000 \\
-                            --network ${NETWORK} \\
-                            --restart always \\
-                            -e MINIO_ENDPOINT=minio-filesystem:9000 \\
-                            -e MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY} \\
-                            -e MINIO_SECRET_KEY=${MINIO_SECRET_KEY} \\
-                            -e MINIO_BUCKET=biopatternsg-kb \\
-                            ${imageName}
-                        """
-                    }
+                    sh """
+                    docker run -d \\
+                        --name ${CONTAINER_NAME} \\
+                        -p ${PORT}:8000 \\
+                        --network ${NETWORK} \\
+                        --restart always \\
+                        -e MINIO_ENDPOINT=minio-filesystem:9000 \\
+                        -e MINIO_BUCKET=biopatternsg-kb \\
+                        ${imageName}
+                    """
                     echo "--- Deployment completed! ---"
                 }
             }
