@@ -25,6 +25,12 @@ RUN python -m nltk.downloader punkt
 
 COPY . .
 
+# Variables de entorno para MinIO — los valores reales se inyectan en runtime desde Jenkins
+ENV MINIO_ENDPOINT=""
+ENV MINIO_ACCESS_KEY=""
+ENV MINIO_SECRET_KEY=""
+ENV MINIO_BUCKET="biopatternsg-kb"
+
 EXPOSE 8000
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

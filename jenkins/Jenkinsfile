@@ -24,7 +24,7 @@ pipeline {
                 script {
                     def imageName = "${CONTAINER_NAME}:latest"
                     echo "--- Deploying container: ${CONTAINER_NAME} ---"
-                    
+
                     sh "docker network create ${NETWORK} || true"
                     sh "docker stop ${CONTAINER_NAME} || true"
                     sh "docker rm ${CONTAINER_NAME} || true"
@@ -35,6 +35,8 @@ pipeline {
                         -p ${PORT}:8000 \\
                         --network ${NETWORK} \\
                         --restart always \\
+                        -e MINIO_ENDPOINT=minio-filesystem:9000 \\
+                        -e MINIO_BUCKET=biopatternsg-kb \\
                         ${imageName}
                     """
                     echo "--- Deployment completed! ---"

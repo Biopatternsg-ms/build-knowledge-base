@@ -2,3 +2,7 @@ fastapi>=0.100.0
 uvicorn>=0.20.0
 nltk>=3.8
 regex
+minio>=7.2.0
+python-multipart>=0.0.5
+
+#PYTHONPATH=. .venv/bin/uvicorn main:app --host 0.0.0.0 --port 8007 --reload
